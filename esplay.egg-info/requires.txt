@@ -1,0 +1,13 @@
+typer[all]>=0.12
+rich>=13
+questionary>=2
+elasticsearch<9,>=8.13
+docker>=7
+pydantic>=2
+pydantic-settings>=2
+requests>=2.31
+
+[dev]
+pytest>=8
+pytest-mock>=3
+pytest-cov>=5
