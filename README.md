@@ -1,0 +1,258 @@
+# esplay — Elasticsearch Learning Playground
+
+> From zero to your first Elasticsearch query in under 5 minutes.
+
+esplay spins up a single-node **Elasticsearch** cluster + **Kibana** locally via Docker,
+seeds a rich `users` index, and hands you ready-to-run queries — all with one command.
+
+---
+
+## Prerequisites
+
+- **Python 3.11+** and [pipx](https://pipx.pypa.io/stable/) (or `pip`)
+- **Docker Desktop** (macOS) — esplay will offer to install it via Homebrew if missing
+
+---
+
+## Install
+
+```bash
+pipx install esplay
+# or: pip install esplay
+```
+
+---
+
+## Quickstart (2 commands)
+
+```bash
+# 1. Start your playground (pulls images, seeds data, prints credentials)
+esplay setup
+
+# 2. When you're done
+esplay destroy
+```
+
+After `setup` finishes you'll see a panel like this:
+
+```
+╭──────────── Your playground is ready! 🎉 ──────────────╮
+│  Kibana Dev Tools : http://localhost:5601/app/dev_tools  │
+│  Kibana URL       : http://localhost:5601                │
+│  Elasticsearch    : http://localhost:9200                │
+│                                                          │
+│  Username         : elastic                              │
+│  Password         : 7Kp9-xQ2...  (copy this!)           │
+│                                                          │
+│  Index            : users  (87 docs)                     │
+╰──────────────────────────────────────────────────────────╯
+```
+
+Open the **Kibana Dev Tools** URL, log in as `elastic` with the printed password, and paste
+any of the sample queries printed after setup.
+
+---
+
+## Commands
+
+| Command | Alias | Description |
+|---|---|---|
+| `esplay setup` | `create-db` | Provision ES + Kibana, seed data, print credentials |
+| `esplay destroy` | `destroy-db` | Stop and remove all containers (+ optional volume purge) |
+| `esplay status` | — | Show container health and connection info |
+| `esplay credentials` | — | Re-print saved credentials |
+| `esplay open` | — | Open Kibana Dev Tools in your browser |
+| `esplay logs` | — | Stream container logs |
+| `esplay reset` | — | Destroy then re-setup from scratch |
+
+### Global flags
+
+```
+--yes / -y        Skip confirmation prompts
+--quiet / -q      Suppress non-essential output
+--debug           Show full stack traces on errors
+--no-kibana       Launch Elasticsearch only (lower RAM usage)
+--version / -V    Print version
+```
+
+---
+
+## Sample queries (Kibana Dev Tools)
+
+```
+# Full-text search
+GET users/_search
+{ "query": { "match": { "first_name": "Alice" } } }
+
+# Range filter — active users aged 25–35
+GET users/_search
+{
+  "query": {
+    "bool": {
+      "must":   { "term":  { "is_active": true } },
+      "filter": { "range": { "age": { "gte": 25, "lte": 35 } } }
+    }
+  }
+}
+
+# Aggregation — average salary by department
+GET users/_search
+{
+  "size": 0,
+  "aggs": {
+    "by_department": {
+      "terms": { "field": "department" },
+      "aggs": { "avg_salary": { "avg": { "field": "salary" } } }
+    }
+  }
+}
+
+# Bool query — Engineers in the US earning > $100k, sorted by salary
+GET users/_search
+{
+  "query": {
+    "bool": {
+      "must":   [{ "term": { "role": "Engineer" } },
+                 { "term": { "country": "US" } }],
+      "filter": { "range": { "salary": { "gt": 100000 } } }
+    }
+  },
+  "sort": [{ "salary": "desc" }]
+}
+```
+
+---
+
+## Configuration
+
+esplay works with zero configuration. To override defaults:
+
+```bash
+# Via environment variables (prefix ESPLAY_)
+export ESPLAY_ES_PORT=9201
+export ESPLAY_KIBANA_PORT=5602
+export ESPLAY_STACK_VERSION=8.14.0
+export ESPLAY_ES_HEAP_SIZE=1g
+
+esplay setup
+```
+
+State (credentials, container IDs) is saved to `~/.esplay/state.json` with mode `0600`.
+
+> **Security note:** This setup uses HTTP (not HTTPS) and is intended for local learning only.
+> `xpack.security` is enabled so you practice real authentication. For any non-local use, enable
+> `xpack.security.http.ssl` and switch to HTTPS.
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `Docker daemon is not running` | Open Docker Desktop and wait for the whale icon to settle |
+| Kibana timeout | Run `esplay logs --service kibana`; try increasing `ESPLAY_KIBANA_HEALTH_TIMEOUT=240` |
+| Port conflict | Set `ESPLAY_ES_PORT=9201` and/or `ESPLAY_KIBANA_PORT=5602` |
+| `esplay destroy` then `setup` fails | Run `esplay destroy --purge` to remove the data volume |
+
+---
+
+## How to extend
+
+The architecture uses dependency inversion at three extension seams. Adding support for a new OS,
+a new container engine, or a new dataset requires implementing **one interface** and registering
+it — no existing files change.
+
+### Add a new OS (e.g. Linux)
+
+1. Create `esplay/platform/linux.py`:
+
+```python
+from esplay.platform.base import PlatformProvider
+
+class LinuxPlatform(PlatformProvider):
+    def name(self): return "Linux"
+    def is_docker_installed(self): ...
+    def install_docker_instructions(self): ...
+    def offer_docker_install(self): ...
+    def open_url(self, url): ...
+```
+
+2. Register it in `esplay/platform/factory.py`:
+
+```python
+return {
+    "Darwin": MacOSPlatform,
+    "Linux":  LinuxPlatform,   # add this line
+}
+```
+
+That's it. `SetupService` and every other service pick it up automatically.
+
+### Add a new container runtime (e.g. Podman)
+
+1. Create `esplay/runtime/podman.py` implementing `ContainerRuntime`.
+2. Add `"podman": PodmanRuntime` to `esplay/runtime/factory.py`.
+3. Pass `--runtime podman` (not yet wired as a flag, but the factory supports it).
+
+`ClusterManager` and `KibanaManager` depend only on `ContainerRuntime` (the interface)
+so they work unchanged.
+
+### Add a new dataset (e.g. products)
+
+1. Create `esplay/datasets/products.py`:
+
+```python
+from esplay.datasets.base import DatasetProvider
+
+class ProductsDataset(DatasetProvider):
+    def index_name(self): return "products"
+    def mapping(self): return { "mappings": { "properties": { ... } } }
+    def documents(self): return json.loads(Path("data/products.json").read_text())
+```
+
+2. Register in `esplay/datasets/registry.py`:
+
+```python
+return {
+    "users":    UsersDataset,
+    "products": ProductsDataset,   # add this line
+}
+```
+
+3. Use it: `esplay setup --dataset products` (set `ESPLAY_DATASET=products`).
+
+---
+
+## Development
+
+```bash
+git clone https://github.com/yourname/esplay
+cd esplay
+pip install -e ".[dev]"
+
+# Run unit tests (no Docker needed)
+pytest -m "not integration"
+
+# Run integration tests (requires Docker)
+pytest -m integration
+```
+
+---
+
+## Architecture
+
+```
+CLI layer (cli.py)                — Typer + Rich; parses args, drives services
+   ↓
+Orchestration (services/)         — SetupService, TeardownService, StatusService
+   ↓
+Domain (domain/)                  — ClusterManager, KibanaManager, IndexProvisioner, DataSeeder
+   ↓
+Abstractions (platform/, runtime/, datasets/)  ← extension seams
+   ↓
+Implementations                   — MacOSPlatform, DockerRuntime, UsersDataset
+```
+
+Design patterns: **Strategy** (platform/runtime), **Factory** (selection at runtime),
+**Repository** (IndexProvisioner/DataSeeder wrap ES), **Command** (each service = one use-case).
+All services receive dependencies via constructor (**dependency injection**) — no global singletons.

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "esplay"
+version = "0.1.0"
+description = "Interactive Elasticsearch learning playground — spin up ES + Kibana in one command"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "esplay contributors" }]
+keywords = ["elasticsearch", "learning", "docker", "kibana", "playground"]
+
+dependencies = [
+    "typer[all]>=0.12",
+    "rich>=13",
+    "questionary>=2",
+    "elasticsearch>=8.13,<9",
+    "docker>=7",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+    "requests>=2.31",
+]
+
+[project.scripts]
+esplay = "esplay.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-mock>=3",
+    "pytest-cov>=5",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["esplay*"]
+
+[tool.setuptools.package-data]
+"esplay.datasets.data" = ["*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: marks tests that require a live Docker daemon (deselect with -m 'not integration')",
+]
